@@ -1,0 +1,142 @@
+networks:
+  tig:
+    driver: bridge
+    name: tig_stack
+
+volumes:
+  influxdb.data:
+    name: influxdb.data
+  grafana.data:
+    name: grafana.data
+  mongo.data:
+    name: mongo.data
+  elasticsearch.data:
+    name: elasticsearch.data
+
+services:
+  influxdb:
+    image: influxdb:1.8.10
+    container_name: influxdb
+    ports:
+      - "8086:8086"
+    env_file:
+      - 'env.influxdb'
+    networks:
+      tig:
+        aliases:
+          - influxdb.local
+    volumes:
+      - influxdb.data:/var/lib/influxdb
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  telegraf:
+    image: telegraf:latest
+    container_name: telegraf
+    networks:
+      tig:
+        aliases:
+          - telegraf.local
+    links:
+      - influxdb
+    volumes:
+      - ./telegraf.conf:/etc/telegraf/telegraf.conf:ro
+    
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    env_file:
+      - 'env.grafana'
+    user: "0"
+    networks:
+      tig:
+        aliases:
+          - grafana.local
+    links:
+      - influxdb
+    volumes:
+      - grafana.data:/var/lib/grafana
+
+  mongo:
+    container_name: mongo
+    image: mongo:latest
+    networks:
+      tig:
+        aliases:
+          - mongo.local
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo.data:/data/db
+      - mongo.data:/data/configdb
+
+  elasticsearch:
+    container_name: elasticsearch
+    image: elasticsearch:7.14.2
+    volumes:
+      - elasticsearch.data:/usr/share/elasticsearch/data
+    ports:
+      - '9200:9200'
+      - '9300:9300'
+    environment:
+      ES_JAVA_OPTS: "-Xmx512m -Xms512m"
+      discovery.type: single-node
+    networks:
+      tig:
+        aliases:
+          - elasticsearch.local
+
+  nginx:
+    container_name: nginx
+    image: jerrybendy/nginx-http2:latest
+    #build:
+    #  context: ./nginx
+    #  dockerfile: Dockerfile
+    #  args:
+    #    NGINX_VERSION: 1.21.4
+    volumes:
+      - ./nginx/nginx.conf:/usr/local/nginx/conf/nginx.conf
+    ports:
+      - '8888:80'
+    networks:
+      tig:
+        aliases:
+          - nginx.local
+    links:
+      - aspnetapp_master
+      - aspnetapp_slave
+
+  aspnetapp_master:
+    container_name: aspnetapp_master
+    image: aspnetapp_master:latest
+    build:
+      context: .
+      dockerfile: ./WebApplication/WebApplication/Dockerfile
+    environment:
+      - "Mongo__ConnectionString=mongodb://mongo.local:27017"
+      - "Elasticsearch__Uris=http://elasticsearch.local:9300"
+    networks:
+      tig:
+        aliases:
+          - aspnetapp.master.local
+    links:
+      - elasticsearch
+      - mongo
+  
+  aspnetapp_slave:
+    container_name: aspnetapp_slave
+    image: aspnetapp_slave:latest
+    build:
+      context: .
+      dockerfile: ./WebApplication/WebApplication/Dockerfile
+    environment:
+      - "Mongo__ConnectionString=mongodb://mongo.local:27017"
+      - "Elasticsearch__Uris=http://elasticsearch.local:9300"
+    networks:
+      tig:
+        aliases:
+          - aspnetapp.slave.local
+    links:
+      - elasticsearch
+      - mongo
